@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Door Slam</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            touch-action: none;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            background: linear-gradient(to bottom, #2c3e50, #000000);
+            cursor: crosshair;
+        }
+
+        .ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+
+        .lives {
+            font-size: 24px;
+            color: #ff4757;
+            font-weight: bold;
+        }
+
+        .score {
+            font-size: 20px;
+            color: #2ed573;
+        }
+
+        /* Menu and Message Box Styling */
+        .overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.95);
+            padding: 40px;
+            border-radius: 15px;
+            text-align: center;
+            border: 2px solid #555;
+            min-width: 320px;
+            z-index: 10;
+        }
+
+        #color-menu {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .color-options {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .color-btn {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            cursor: pointer;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .color-btn:hover {
+            transform: scale(1.15);
+            border-color: white;
+        }
+
+        .color-btn.active {
+            border-color: white;
+            box-shadow: 0 0 10px white;
+        }
+
+        #message-box {
+            display: none;
+        }
+
+        button.main-btn {
+            background: #2ed573;
+            border: none;
+            padding: 12px 30px;
+            color: white;
+            font-size: 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: transform 0.1s;
+        }
+
+        button.main-btn:active {
+            transform: scale(0.95);
+        }
+
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            font-size: 14px;
+            color: #aaa;
+            text-align: center;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div class="ui-layer">
+            <div class="lives" id="lives-display">❤❤❤</div>
+            <div class="score" id="score-display">Survival Time: 0s</div>
+        </div>
+        
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- Color Selection Menu -->
+        <div id="color-menu" class="overlay">
+            <h2>Welcome to Door Slam!</h2>
+            <p>Pick your stickman's color:</p>
+            <div class="color-options">
+                <div class="color-btn" style="background: white;" onclick="setPlayerColor('white', this)"></div>
+                <div class="color-btn" style="background: #ff4757;" onclick="setPlayerColor('#ff4757', this)"></div>
+                <div class="color-btn" style="background: #2ed573;" onclick="setPlayerColor('#2ed573', this)"></div>
+                <div class="color-btn" style="background: #54a0ff;" onclick="setPlayerColor('#54a0ff', this)"></div>
+                <div class="color-btn" style="background: #feca57;" onclick="setPlayerColor('#feca57', this)"></div>
+                <div class="color-btn" style="background: #ff9ff3;" onclick="setPlayerColor('#ff9ff3', this)"></div>
+            </div>
+            <button class="main-btn" onclick="startGameFlow()">Ready to Play!</button>
+        </div>
+
+        <!-- Game Over Box -->
+        <div id="message-box" class="overlay">
+            <h2 id="msg-title">Game Over!</h2>
+            <p id="msg-text">The turret got you!</p>
+            <button class="main-btn" onclick="resetGame()">Play Again</button>
+        </div>
+    </div>
+
+    <div class="instructions" id="instruction-text">Choose a color to start!</div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const livesDisplay = document.getElementById('lives-display');
+        const scoreDisplay = document.getElementById('score-display');
+        const messageBox = document.getElementById('message-box');
+        const colorMenu = document.getElementById('color-menu');
+        const instructionText = document.getElementById('instruction-text');
+        const msgTitle = document.getElementById('msg-title');
+        const msgText = document.getElementById('msg-text');
+
+        // Audio System
+        let audioCtx;
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        const SFX = {
+            shoot: () => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.1);
+            },
+            doorSlide: () => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                osc.frequency.linearRampToValueAtTime(120, audioCtx.currentTime + 0.3);
+                gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            },
+            wallThud: () => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(100, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.1);
+            },
+            portal: () => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(2000, audioCtx.currentTime + 0.4);
+                gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.4);
+            },
+            explosion: () => {
+                const bufferSize = audioCtx.sampleRate * 0.5;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+                filter.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.5);
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                noise.start();
+                noise.stop(audioCtx.currentTime + 0.5);
+            },
+            die: () => {
+                // Descending "falling apart" sound
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.5);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.5);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.5);
+            }
+        };
+
+        // Game Configuration
+        let width, height;
+        let lives = 3;
+        let sessionStartTime = Date.now();
+        let accumulatedTime = 0; 
+        let gameOver = false;
+        let gameStarted = false; 
+        let colorSelected = false;
+        let lastBulletTime = 0;
+        let bulletFrequency = 1500; // ms
+
+        // Grid Configuration (3x3)
+        const rows = 3;
+        const cols = 3;
+        let doors = [];
+        let particles = [];
+
+        // Stickman State
+        const player = {
+            gridX: 1,
+            gridY: 1,
+            x: 0,
+            y: 0,
+            targetX: 0,
+            targetY: 0,
+            isMoving: false,
+            speed: 0.1,
+            radius: 15,
+            animFrame: 0,
+            isVisible: true,
+            isDying: false,
+            deathTimer: 0,
+            deathSegments: [],
+            color: 'white'
+        };
+
+        const turret = {
+            x: 0,
+            y: 0,
+            angle: 0,
+            initialRotationSpeed: 0.015,
+            rotationSpeed: 0.015,
+            bullets: [],
+            lastMoveTime: 0,
+            moveInterval: 10000,
+            quadrantIndex: 2 
+        };
+
+        const DOOR_STATES = {
+            WALL: 'wall',
+            EXPLOSION: 'explosion',
+            PORTAL: 'portal'
+        };
+
+        function setPlayerColor(color, btn) {
+            initAudio();
+            player.color = color;
+            document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        function startGameFlow() {
+            initAudio();
+            colorMenu.style.display = 'none';
+            colorSelected = true;
+            instructionText.innerText = "Click/Tap a door to run. The turret starts when you move!";
+        }
+
+        function getQuadrantCenter(index) {
+            const qx = index % 2 === 0 ? 0.25 : 0.75;
+            const qy = index < 2 ? 0.25 : 0.75;
+            return { x: width * qx, y: height * qy };
+        }
+
+        function init() {
+            resize();
+            createGrid();
+            player.x = player.targetX = doors[4].x;
+            player.y = player.targetY = doors[4].y;
+            
+            const pos = getQuadrantCenter(turret.quadrantIndex);
+            turret.x = pos.x;
+            turret.y = pos.y;
+            
+            turret.lastMoveTime = Date.now();
+            requestAnimationFrame(gameLoop);
+            
+            document.querySelector('.color-btn').classList.add('active');
+        }
+
+        function resize() {
+            width = Math.min(window.innerWidth * 0.9, 800);
+            height = Math.min(window.innerHeight * 0.8, 600);
+            canvas.width = width;
+            canvas.height = height;
+            
+            const pos = getQuadrantCenter(turret.quadrantIndex);
+            turret.x = pos.x;
+            turret.y = pos.y;
+        }
+
+        function createGrid() {
+            doors = [];
+            const padding = 80;
+            const stepX = (width - padding * 2) / (cols - 1);
+            const stepY = (height - padding * 2) / (rows - 1);
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    doors.push({
+                        id: r * cols + c,
+                        gridX: c,
+                        gridY: r,
+                        x: padding + c * stepX,
+                        y: padding + r * stepY,
+                        width: 50,
+                        height: 70,
+                        revealing: false,
+                        revealTimer: 0,
+                        content: null,
+                        countdown: null, 
+                        countdownStart: 0
+                    });
+                }
+            }
+        }
+
+        function createExplosion(x, y, color = null) {
+            SFX.explosion();
+            for (let i = 0; i < 30; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 15,
+                    vy: (Math.random() - 0.5) * 15,
+                    life: 1.0,
+                    color: color || `rgb(255, ${Math.floor(Math.random() * 200)}, 0)`,
+                    size: Math.random() * 10 + 2
+                });
+            }
+        }
+
+        function drawStickman(x, y, isMoving) {
+            if (!player.isVisible) return;
+
+            ctx.strokeStyle = player.color;
+            ctx.lineWidth = 3;
+            
+            if (player.isDying) {
+                // Draw falling segments
+                player.deathSegments.forEach(seg => {
+                    ctx.save();
+                    ctx.translate(seg.x, seg.y);
+                    ctx.rotate(seg.angle);
+                    ctx.beginPath();
+                    if (seg.type === 'head') {
+                        ctx.arc(0, 0, 8, 0, Math.PI * 2);
+                    } else {
+                        ctx.moveTo(0, 0);
+                        ctx.lineTo(seg.length, 0);
+                    }
+                    ctx.stroke();
+                    ctx.restore();
+                });
+                return;
+            }
+
+            // Normal Drawing
+            ctx.beginPath();
+            // Head
+            ctx.arc(x, y - 25, 8, 0, Math.PI * 2);
+            // Body
+            ctx.moveTo(x, y - 17);
+            ctx.lineTo(x, y + 5);
+            // Legs
+            let legSwing = isMoving ? Math.sin(Date.now() / 100) * 10 : 0;
+            ctx.moveTo(x, y + 5);
+            ctx.lineTo(x - 10 + legSwing, y + 25);
+            ctx.moveTo(x, y + 5);
+            ctx.lineTo(x + 10 - legSwing, y + 25);
+            // Arms
+            let armSwing = isMoving ? Math.cos(Date.now() / 100) * 8 : 0;
+            ctx.moveTo(x, y - 10);
+            ctx.lineTo(x - 12 + armSwing, y);
+            ctx.moveTo(x, y - 10);
+            ctx.lineTo(x + 12 - armSwing, y);
+            ctx.stroke();
+        }
+
+        function drawDoor(door) {
+            ctx.save();
+            ctx.translate(door.x, door.y);
+            
+            ctx.strokeStyle = "#8d6e63";
+            ctx.lineWidth = 4;
+            ctx.strokeRect(-door.width/2, -door.height/2, door.width, door.height);
+            
+            if (door.revealing) {
+                ctx.fillStyle = "#000";
+                ctx.fillRect(-door.width/2, -door.height/2, door.width, door.height);
+                
+                if (door.content === DOOR_STATES.EXPLOSION) {
+                    const pulse = Math.abs(Math.sin(Date.now() / 200));
+                    ctx.fillStyle = `rgba(255, 0, 0, ${pulse * 0.3})`;
+                    ctx.fillRect(-door.width/2, -door.height/2, door.width, door.height);
+                    
+                    if (door.countdown !== null) {
+                        ctx.fillStyle = "#ff4757";
+                        ctx.font = "bold 40px Arial";
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText(door.countdown, 0, 0);
+                    }
+                } else if (door.content === DOOR_STATES.WALL) {
+                    ctx.fillStyle = "#b71c1c";
+                    for(let i=0; i<3; i++) {
+                        ctx.fillRect(-door.width/2 + 5, -door.height/2 + 10 + i*20, door.width - 10, 15);
+                    }
+                } else if (door.content === DOOR_STATES.PORTAL) {
+                    ctx.strokeStyle = "#00d2ff";
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 15 + Math.sin(Date.now()/100)*3, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            }
+
+            let slideX = door.revealing ? Math.min(door.revealTimer * 50, door.width) : 0;
+            ctx.translate(-slideX, 0); 
+
+            ctx.fillStyle = "#5d4037";
+            ctx.fillRect(-door.width/2, -door.height/2, door.width, door.height);
+            ctx.strokeStyle = "#3e2723";
+            ctx.strokeRect(-door.width/2, -door.height/2, door.width, door.height);
+            
+            ctx.fillStyle = "gold";
+            ctx.beginPath();
+            ctx.arc(door.width/2 - 10, 0, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
+        function drawTurret() {
+            ctx.save();
+            ctx.translate(turret.x, turret.y);
+            
+            let dx = player.x - turret.x;
+            let dy = player.y - turret.y;
+            let targetAngle = Math.atan2(dy, dx);
+            
+            let angleDiff = targetAngle - turret.angle;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            
+            if (Math.abs(angleDiff) > turret.rotationSpeed) {
+                turret.angle += Math.sign(angleDiff) * turret.rotationSpeed;
+            } else {
+                turret.angle = targetAngle;
+            }
+            
+            ctx.rotate(turret.angle);
+            ctx.fillStyle = "#444";
+            ctx.beginPath();
+            ctx.arc(0, 0, 20, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#222";
+            ctx.fillRect(0, -8, 40, 16);
+            ctx.restore();
+        }
+
+        function moveTurretToQuadrant() {
+            createExplosion(turret.x, turret.y, "#ffffff");
+            
+            let newIndex;
+            do {
+                newIndex = Math.floor(Math.random() * 4);
+            } while (newIndex === turret.quadrantIndex);
+            
+            turret.quadrantIndex = newIndex;
+            const pos = getQuadrantCenter(turret.quadrantIndex);
+            turret.x = pos.x;
+            turret.y = pos.y;
+            
+            createExplosion(turret.x, turret.y, "#00d2ff");
+            turret.lastMoveTime = Date.now();
+            turret.rotationSpeed = Math.min(0.085, turret.rotationSpeed + 0.01);
+        }
+
+        function update() {
+            if (gameOver || !colorSelected) return;
+
+            let currentTotalMs = accumulatedTime;
+            if (gameStarted && !player.isDying) {
+                currentTotalMs += (Date.now() - sessionStartTime);
+                
+                if (Date.now() - turret.lastMoveTime > turret.moveInterval) {
+                    moveTurretToQuadrant();
+                }
+            }
+            scoreDisplay.innerText = `Survival Time: ${Math.floor(currentTotalMs/1000)}s`;
+
+            // Player dying animation update
+            if (player.isDying) {
+                player.deathTimer++;
+                player.deathSegments.forEach(seg => {
+                    seg.x += seg.vx;
+                    seg.y += seg.vy;
+                    seg.vy += 0.5; // Gravity
+                    seg.angle += seg.va;
+                    
+                    // Bounce off "floor" (relative to where they died)
+                    if (seg.y > player.deathFloorY) {
+                        seg.y = player.deathFloorY;
+                        seg.vy *= -0.3;
+                        seg.vx *= 0.5;
+                        seg.va *= 0.5;
+                    }
+                });
+
+                if (player.deathTimer > 120) { // ~2 seconds at 60fps
+                    finishRespawn();
+                }
+                return; // Stop processing other player updates
+            }
+
+            if (player.isMoving) {
+                player.x += (player.targetX - player.x) * player.speed;
+                player.y += (player.targetY - player.y) * player.speed;
+
+                if (Math.abs(player.x - player.targetX) < 1 && Math.abs(player.y - player.targetY) < 1) {
+                    player.x = player.targetX;
+                    player.y = player.targetY;
+                    player.isMoving = false;
+                    onArriveAtDoor();
+                }
+            }
+
+            if (gameStarted && Date.now() - lastBulletTime > bulletFrequency) {
+                shoot();
+                lastBulletTime = Date.now();
+                bulletFrequency = Math.max(500, bulletFrequency - 10);
+            }
+
+            for (let i = turret.bullets.length - 1; i >= 0; i--) {
+                let b = turret.bullets[i];
+                if (!b) continue;
+
+                b.x += b.vx;
+                b.y += b.vy;
+
+                let dist = Math.hypot(b.x - player.x, b.y - player.y);
+                if (dist < 15 && player.isVisible && !player.isDying) {
+                    hitPlayer();
+                    break; 
+                }
+
+                if (b.x < 0 || b.x > width || b.y < 0 || b.y > height) {
+                    turret.bullets.splice(i, 1);
+                }
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            doors.forEach(d => {
+                if (d.revealing) {
+                    d.revealTimer += 0.05;
+                    if (d.revealTimer > 3 && d.content !== DOOR_STATES.EXPLOSION) {
+                        d.revealing = false;
+                        d.revealTimer = 0;
+                    }
+                }
+
+                if (d.content === DOOR_STATES.EXPLOSION && d.countdown !== null) {
+                    const elapsed = (Date.now() - d.countdownStart) / 1000;
+                    const remaining = Math.max(0, 2 - Math.floor(elapsed)); // Calculates remaining seconds based on 2s limit
+                    d.countdown = remaining;
+
+                    if (elapsed >= 2) { // Trigger explosion after 2s
+                        createExplosion(d.x, d.y);
+                        d.content = null;
+                        d.countdown = null;
+                        d.revealing = false;
+                        d.revealTimer = 0;
+
+                        const dist = Math.hypot(player.x - d.x, player.y - d.y);
+                        if (dist < 30 && !player.isDying) {
+                            hitPlayer();
+                        }
+                    }
+                }
+            });
+        }
+
+        function shoot() {
+            SFX.shoot();
+            let angle = turret.angle;
+            let speed = 2.5;
+            turret.bullets.push({
+                x: turret.x + Math.cos(angle) * 40,
+                y: turret.y + Math.sin(angle) * 40,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed
+            });
+        }
+
+        function hitPlayer() {
+            if (gameStarted) {
+                accumulatedTime += (Date.now() - sessionStartTime);
+                gameStarted = false;
+            }
+
+            lives--;
+            updateLives();
+            
+            // Trigger Death Sound
+            SFX.die();
+
+            // Start Falling Apart Animation
+            player.isDying = true;
+            player.deathTimer = 0;
+            player.deathFloorY = player.y + 25;
+            
+            // Generate segments based on current position
+            player.deathSegments = [
+                { type: 'head', x: player.x, y: player.y - 25, vx: Math.random() * 4 - 2, vy: -5, angle: 0, va: 0.1 },
+                { type: 'line', x: player.x, y: player.y - 17, vx: Math.random() * 4 - 2, vy: -4, angle: 0, va: 0.1, length: 22 }, // Spine
+                { type: 'line', x: player.x, y: player.y - 10, vx: Math.random() * 6 - 3, vy: -3, angle: Math.PI, va: -0.2, length: 15 }, // Arm L
+                { type: 'line', x: player.x, y: player.y - 10, vx: Math.random() * 6 - 3, vy: -3, angle: 0, va: 0.2, length: 15 }, // Arm R
+                { type: 'line', x: player.x, y: player.y + 5, vx: Math.random() * 2 - 1, vy: -2, angle: Math.PI/2, va: -0.1, length: 20 }, // Leg L
+                { type: 'line', x: player.x, y: player.y + 5, vx: Math.random() * 2 - 1, vy: -2, angle: Math.PI/2, va: 0.1, length: 20 }  // Leg R
+            ];
+
+            if (lives <= 0) {
+                setTimeout(() => {
+                    endGame("Game Over!", "The turret got you!");
+                }, 2000);
+            }
+        }
+
+        function finishRespawn() {
+            player.isDying = false;
+            player.deathTimer = 0;
+            player.deathSegments = [];
+            
+            const centerDoor = doors[4];
+            player.x = player.targetX = centerDoor.x;
+            player.y = player.targetY = centerDoor.y;
+            player.gridX = centerDoor.gridX;
+            player.gridY = centerDoor.gridY;
+            player.isMoving = false;
+            player.isVisible = true;
+            turret.bullets.length = 0;
+        }
+
+        function updateLives() {
+            livesDisplay.innerText = "❤".repeat(lives);
+        }
+
+        function onArriveAtDoor() {
+            const currentDoor = doors.find(d => d.gridX === player.gridX && d.gridY === player.gridY);
+            currentDoor.revealing = true;
+            SFX.doorSlide();
+            
+            const rand = Math.random();
+            if (rand < 0.20) {
+                currentDoor.content = DOOR_STATES.EXPLOSION;
+                currentDoor.countdown = 2; // Reduced display timer
+                currentDoor.countdownStart = Date.now();
+            } else if (rand < 0.60) {
+                currentDoor.content = DOOR_STATES.WALL;
+                SFX.wallThud();
+            } else {
+                currentDoor.content = DOOR_STATES.PORTAL;
+                setTimeout(() => {
+                    if (!player.isDying) teleport();
+                }, 500);
+            }
+        }
+
+        function teleport() {
+            SFX.portal();
+            const currentIdx = player.gridY * cols + player.gridX;
+            let nextIdx;
+            do {
+                nextIdx = Math.floor(Math.random() * doors.length);
+            } while (nextIdx === currentIdx);
+
+            const nextDoor = doors[nextIdx];
+            player.x = player.targetX = nextDoor.x;
+            player.y = player.targetY = nextDoor.y;
+            player.gridX = nextDoor.gridX;
+            player.gridY = nextDoor.gridY;
+            nextDoor.revealing = true;
+            nextDoor.content = DOOR_STATES.PORTAL;
+        }
+
+        function render() {
+            ctx.clearRect(0, 0, width, height);
+
+            ctx.strokeStyle = "rgba(255,255,255,0.1)";
+            ctx.lineWidth = 10;
+            ctx.beginPath();
+            for(let c=0; c<cols; c++) {
+                ctx.moveTo(doors[c].x, doors[c].y);
+                ctx.lineTo(doors[c + 6].x, doors[c + 6].y);
+            }
+            for(let r=0; r<rows; r++) {
+                ctx.moveTo(doors[r*3].x, doors[r*3].y);
+                ctx.lineTo(doors[r*3 + 2].x, doors[r*3 + 2].y);
+            }
+            ctx.stroke();
+
+            doors.forEach(drawDoor);
+            drawTurret();
+
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            ctx.fillStyle = "#fffa65";
+            turret.bullets.forEach(b => {
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = "yellow";
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+
+            drawStickman(player.x, player.y, player.isMoving);
+
+            if (colorSelected && !gameStarted && !gameOver && !player.isDying) {
+                ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+                ctx.font = "20px Segoe UI";
+                ctx.textAlign = "center";
+                ctx.fillText("Select a door to begin...", width / 2, height / 2 + 50);
+            }
+        }
+
+        function gameLoop() {
+            update();
+            render();
+            if (!gameOver) requestAnimationFrame(gameLoop);
+        }
+
+        function handleInput(e) {
+            if (gameOver || player.isMoving || !player.isVisible || !colorSelected || player.isDying) return;
+            initAudio();
+
+            const rect = canvas.getBoundingClientRect();
+            const mousePoint = e.touches ? e.touches[0] : e;
+            const mouseX = mousePoint.clientX - rect.left;
+            const mouseY = mousePoint.clientY - rect.top;
+
+            doors.forEach(d => {
+                const dx = Math.abs(mouseX - d.x);
+                const dy = Math.abs(mouseY - d.y);
+                if (dx < 40 && dy < 50) {
+                    const dist = Math.abs(d.gridX - player.gridX) + Math.abs(d.gridY - player.gridY);
+                    if (dist === 1) {
+                        if (!gameStarted) {
+                            gameStarted = true;
+                            sessionStartTime = Date.now();
+                            lastBulletTime = Date.now();
+                            turret.lastMoveTime = Date.now();
+                        }
+                        
+                        player.targetX = d.x;
+                        player.targetY = d.y;
+                        player.gridX = d.gridX;
+                        player.gridY = d.gridY;
+                        player.isMoving = true;
+                    }
+                }
+            });
+        }
+
+        function endGame(title, text) {
+            gameOver = true;
+            msgTitle.innerText = title;
+            msgText.innerText = text;
+            messageBox.style.display = "block";
+        }
+
+        function resetGame() {
+            lives = 3;
+            gameOver = false;
+            gameStarted = false; 
+            colorSelected = false; 
+            accumulatedTime = 0;
+            bulletFrequency = 1500;
+            updateLives();
+            messageBox.style.display = "none";
+            colorMenu.style.display = "block";
+            instructionText.innerText = "Choose a color to start!";
+            
+            const centerDoor = doors[4];
+            player.x = player.targetX = centerDoor.x;
+            player.y = player.targetY = centerDoor.y;
+            player.gridX = centerDoor.gridX;
+            player.gridY = centerDoor.gridY;
+            player.isMoving = false;
+            player.isVisible = true;
+            player.isDying = false;
+            player.deathSegments = [];
+            turret.bullets.length = 0;
+            particles = [];
+            
+            turret.quadrantIndex = 2;
+            const pos = getQuadrantCenter(turret.quadrantIndex);
+            turret.x = pos.x;
+            turret.y = pos.y;
+            turret.lastMoveTime = Date.now();
+            turret.rotationSpeed = turret.initialRotationSpeed;
+
+            doors.forEach(d => {
+                d.countdown = null;
+                d.content = null;
+                d.revealing = false;
+            });
+            scoreDisplay.innerText = "Survival Time: 0s";
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.addEventListener('mousedown', handleInput);
+        window.addEventListener('touchstart', handleInput);
+        window.addEventListener('resize', resize);
+
+        init();
+    </script>
+</body>
+</html>
