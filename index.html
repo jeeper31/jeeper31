@@ -262,7 +262,6 @@
                 noise.stop(audioCtx.currentTime + 0.5);
             },
             die: () => {
-                // Descending "falling apart" sound
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.type = 'sawtooth';
@@ -279,6 +278,7 @@
 
         // Game Configuration
         let width, height;
+        let gameScale = 1.0; // Responsive multiplier
         let lives = 3;
         let sessionStartTime = Date.now();
         let accumulatedTime = 0; 
@@ -317,7 +317,7 @@
             x: 0,
             y: 0,
             angle: 0,
-            initialRotationSpeed: 0.015,
+            baseInitialRotationSpeed: 0.015,
             rotationSpeed: 0.015,
             bullets: [],
             lastMoveTime: 0,
@@ -372,6 +372,13 @@
             height = Math.min(window.innerHeight * 0.8, 600);
             canvas.width = width;
             canvas.height = height;
+
+            // Responsive Scaling: Smaller screens slow down rotation and bullet speeds
+            // Reference width is 800px.
+            gameScale = Math.max(0.5, width / 800); 
+            
+            // Adjust turret speed based on the new scale
+            turret.rotationSpeed = turret.baseInitialRotationSpeed * gameScale;
             
             const pos = getQuadrantCenter(turret.quadrantIndex);
             turret.x = pos.x;
@@ -562,7 +569,9 @@
             
             createExplosion(turret.x, turret.y, "#00d2ff");
             turret.lastMoveTime = Date.now();
-            turret.rotationSpeed = Math.min(0.085, turret.rotationSpeed + 0.01);
+            
+            // Progressive rotation speed also scaled by screen size
+            turret.rotationSpeed = Math.min(0.085 * gameScale, turret.rotationSpeed + (0.01 * gameScale));
         }
 
         function update() {
@@ -578,16 +587,14 @@
             }
             scoreDisplay.innerText = `Survival Time: ${Math.floor(currentTotalMs/1000)}s`;
 
-            // Player dying animation update
             if (player.isDying) {
                 player.deathTimer++;
                 player.deathSegments.forEach(seg => {
                     seg.x += seg.vx;
                     seg.y += seg.vy;
-                    seg.vy += 0.5; // Gravity
+                    seg.vy += 0.5;
                     seg.angle += seg.va;
                     
-                    // Bounce off "floor" (relative to where they died)
                     if (seg.y > player.deathFloorY) {
                         seg.y = player.deathFloorY;
                         seg.vy *= -0.3;
@@ -596,10 +603,10 @@
                     }
                 });
 
-                if (player.deathTimer > 120) { // ~2 seconds at 60fps
+                if (player.deathTimer > 120) { 
                     finishRespawn();
                 }
-                return; // Stop processing other player updates
+                return;
             }
 
             if (player.isMoving) {
@@ -657,10 +664,10 @@
 
                 if (d.content === DOOR_STATES.EXPLOSION && d.countdown !== null) {
                     const elapsed = (Date.now() - d.countdownStart) / 1000;
-                    const remaining = Math.max(0, 2 - Math.floor(elapsed)); // Calculates remaining seconds based on 2s limit
+                    const remaining = Math.max(0, 2 - Math.floor(elapsed)); 
                     d.countdown = remaining;
 
-                    if (elapsed >= 2) { // Trigger explosion after 2s
+                    if (elapsed >= 2) { 
                         createExplosion(d.x, d.y);
                         d.content = null;
                         d.countdown = null;
@@ -679,7 +686,8 @@
         function shoot() {
             SFX.shoot();
             let angle = turret.angle;
-            let speed = 2.5;
+            // Bullet speed scaled by screen size so they don't zip across too fast on mobile
+            let speed = 2.5 * gameScale;
             turret.bullets.push({
                 x: turret.x + Math.cos(angle) * 40,
                 y: turret.y + Math.sin(angle) * 40,
@@ -697,22 +705,19 @@
             lives--;
             updateLives();
             
-            // Trigger Death Sound
             SFX.die();
 
-            // Start Falling Apart Animation
             player.isDying = true;
             player.deathTimer = 0;
             player.deathFloorY = player.y + 25;
             
-            // Generate segments based on current position
             player.deathSegments = [
                 { type: 'head', x: player.x, y: player.y - 25, vx: Math.random() * 4 - 2, vy: -5, angle: 0, va: 0.1 },
-                { type: 'line', x: player.x, y: player.y - 17, vx: Math.random() * 4 - 2, vy: -4, angle: 0, va: 0.1, length: 22 }, // Spine
-                { type: 'line', x: player.x, y: player.y - 10, vx: Math.random() * 6 - 3, vy: -3, angle: Math.PI, va: -0.2, length: 15 }, // Arm L
-                { type: 'line', x: player.x, y: player.y - 10, vx: Math.random() * 6 - 3, vy: -3, angle: 0, va: 0.2, length: 15 }, // Arm R
-                { type: 'line', x: player.x, y: player.y + 5, vx: Math.random() * 2 - 1, vy: -2, angle: Math.PI/2, va: -0.1, length: 20 }, // Leg L
-                { type: 'line', x: player.x, y: player.y + 5, vx: Math.random() * 2 - 1, vy: -2, angle: Math.PI/2, va: 0.1, length: 20 }  // Leg R
+                { type: 'line', x: player.x, y: player.y - 17, vx: Math.random() * 4 - 2, vy: -4, angle: 0, va: 0.1, length: 22 },
+                { type: 'line', x: player.x, y: player.y - 10, vx: Math.random() * 6 - 3, vy: -3, angle: Math.PI, va: -0.2, length: 15 },
+                { type: 'line', x: player.x, y: player.y - 10, vx: Math.random() * 6 - 3, vy: -3, angle: 0, va: 0.2, length: 15 },
+                { type: 'line', x: player.x, y: player.y + 5, vx: Math.random() * 2 - 1, vy: -2, angle: Math.PI/2, va: -0.1, length: 20 },
+                { type: 'line', x: player.x, y: player.y + 5, vx: Math.random() * 2 - 1, vy: -2, angle: Math.PI/2, va: 0.1, length: 20 }
             ];
 
             if (lives <= 0) {
@@ -749,7 +754,7 @@
             const rand = Math.random();
             if (rand < 0.20) {
                 currentDoor.content = DOOR_STATES.EXPLOSION;
-                currentDoor.countdown = 2; // Reduced display timer
+                currentDoor.countdown = 2; 
                 currentDoor.countdownStart = Date.now();
             } else if (rand < 0.60) {
                 currentDoor.content = DOOR_STATES.WALL;
@@ -902,7 +907,7 @@
             turret.x = pos.x;
             turret.y = pos.y;
             turret.lastMoveTime = Date.now();
-            turret.rotationSpeed = turret.initialRotationSpeed;
+            turret.rotationSpeed = turret.baseInitialRotationSpeed * gameScale;
 
             doors.forEach(d => {
                 d.countdown = null;
